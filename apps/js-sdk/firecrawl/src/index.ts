@@ -3,6 +3,8 @@ import type * as zt from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { WebSocket } from "isows";
 import { TypedEventTarget } from "typescript-event-target";
+import { findRelevantUrls } from "./anthropic.js";
+import { z } from "zod";
 
 /**
  * Configuration interface for FirecrawlApp.
@@ -234,6 +236,20 @@ export interface MapResponse {
   success: true;
   links?: string[];
   error?: string;
+}
+
+interface SmartCrawlResponse {
+  success: boolean;
+  relevantUrls: string[];
+  data: Array<{ url: string; content: string }>;
+  stats: {
+    totalScrapes: number;
+    foundResults: number;
+  };
+}
+
+interface SmartCrawlParams {
+  limit?: number;
 }
 
 /**
@@ -701,6 +717,142 @@ export default class FirecrawlApp {
   }
 
   /**
+   * Intelligently crawls a website to find specific information based on a prompt.
+   * @param url - The base URL to crawl
+   * @param query - The information we're looking for
+   * @param params - Optional parameters to control the smartCrawl
+   * @returns SmartCrawlResponse containing relevant URLs and their data
+   */
+  async smartCrawl(
+    url: string,
+    query: string,
+    params?: SmartCrawlParams
+  ): Promise<SmartCrawlResponse | ErrorResponse> {
+    const scrapeLimit = params?.limit ?? 20;
+
+    const MIN_FOUND_RESULTS = 1;
+
+    let totalScrapes = 0;
+
+    const foundData: Array<{ url: string; content: string }> = [];
+    const scrapedUrls = new Set<string>();
+
+    try {
+      const mapResult = await this.mapUrl(url);
+
+      if (!mapResult.success || !mapResult.links) {
+        return {
+          success: false,
+          error: "No links found to scrape.",
+        };
+      }
+
+      // Define schema to extract contents into
+      const extractSchema = z.object({
+        data: z.string(),
+        found: z.boolean(),
+      });
+
+      const scrapeUrlBatch = async (urlsToScrape: string[]) => {
+        const scrapePromises = urlsToScrape.map(async (urlToScrape) => {
+          if (scrapedUrls.has(urlToScrape)) return null;
+          
+          scrapedUrls.add(urlToScrape);
+          totalScrapes++;
+
+          try {
+            const result = await this.scrapeUrl(urlToScrape, {
+              formats: ['extract', 'links'],
+              onlyMainContent: true,
+              extract: {
+                prompt: query,
+                systemPrompt: "You are a helpful assistant that extracts data from websites. Make sure to only return the data that is relevant to the query. Set found to false if the data is not found.",
+                schema: extractSchema,
+              }
+            });
+
+            if (!result.success) {
+              console.warn(`Failed to scrape URL ${urlToScrape}:`, result.error);
+              return null;
+            }
+            
+            console.log(`Scraped ${urlToScrape} - ${result.extract?.found ? 'found' : 'not found'}`);
+
+            return {
+              url: urlToScrape,
+              success: result.success,
+              found: result.extract?.found || false,
+              content: result.extract?.data || ''
+            };
+          } catch (error) {
+            console.error(`Failed to scrape URL ${urlToScrape}:`, error);
+            return null;
+          }
+        });
+
+        const results = await Promise.all(scrapePromises);
+        return results.filter((r): r is NonNullable<typeof r> => r !== null);
+      };
+
+      let remainingUrls = [...mapResult.links];
+      
+      while (foundData.length < MIN_FOUND_RESULTS && totalScrapes < scrapeLimit && remainingUrls.length > 0) {
+        // Get relevant URLs
+        const relevantUrlsRes = await findRelevantUrls(query, remainingUrls);
+        if (relevantUrlsRes.error || !relevantUrlsRes.urls.length) {
+          break;
+        }
+
+        // Take next batch of URLs
+        const nextBatch = relevantUrlsRes.urls.slice(0, 5);
+        
+        // Scrape batch in parallel
+        const scrapeResults = await scrapeUrlBatch(nextBatch);
+        
+        // Process results
+        const successfulFinds = scrapeResults.filter(r => r.success && r.found);
+        const failedFinds = scrapeResults.filter(r => r.success && !r.found).map(r => r.url);
+
+        // Add successful finds to our collection
+        successfulFinds.forEach(result => {
+          foundData.push({
+            url: result.url,
+            content: result.content
+          });
+        });
+
+        // Remove processed URLs from remaining URLs
+        remainingUrls = remainingUrls.filter(url => 
+          !nextBatch.includes(url) && !scrapedUrls.has(url)
+        );
+      }
+
+      return {
+        success: true,
+        relevantUrls: Array.from(scrapedUrls),
+        // TODO(ishaan): testing out just returning the first found
+        data: foundData.length > 0 ? [foundData[0]] : [] as any,
+        stats: {
+          totalScrapes,
+          foundResults: foundData.length
+        }
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        relevantUrls: Array.from(scrapedUrls),
+        data: foundData,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        stats: {
+          totalScrapes,
+          foundResults: foundData.length
+        }
+      };
+    }
+  }
+
+  /**
    * Extracts information from URLs using the Firecrawl API.
    * Currently in Beta. Expect breaking changes on future minor versions.
    * @param url - The URL to extract information from.
@@ -1000,3 +1152,4 @@ export class CrawlWatcher extends TypedEventTarget<CrawlWatcherEvents> {
     this.ws.close();
   }
 }
+
