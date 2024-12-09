@@ -6,7 +6,6 @@ import { robustFetch } from "../../lib/fetch";
 
 export async function scrapeURLWithPlaywright(meta: Meta): Promise<EngineScrapeResult> {
     const timeout = 20000 + meta.options.waitFor;
-
     const response = await Promise.race([
         await robustFetch({
             url: process.env.PLAYWRIGHT_MICROSERVICE_URL!,
@@ -24,8 +23,8 @@ export async function scrapeURLWithPlaywright(meta: Meta): Promise<EngineScrapeR
             schema: z.object({
                 content: z.string(),
                 pageStatusCode: z.number(),
-                pageError: z.string().optional(),
-            }),
+                pageError: z.union([z.string(), z.boolean()]).optional(),
+            }).passthrough(),
         }),
         (async () => {
             await new Promise((resolve) => setTimeout(() => resolve(null), 20000));
@@ -33,10 +32,20 @@ export async function scrapeURLWithPlaywright(meta: Meta): Promise<EngineScrapeR
         })(),
     ]);
 
+    // Convert pageError to the correct type required by EngineScrapeResult
+    let pageError: string | undefined;
+    if (typeof response.pageError === 'string') {
+        pageError = response.pageError;
+    } else if (response.pageError === true) {
+        pageError = 'Unknown page error occurred';
+    } else {
+        pageError = undefined;
+    }
+
     return {
         url: meta.url, // TODO: impove redirect following
         html: response.content,
         statusCode: response.pageStatusCode,
-        error: response.pageError,
+        error: pageError,
     }
 }
