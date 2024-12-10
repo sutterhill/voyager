@@ -10,6 +10,7 @@ import { TypedEventTarget } from 'typescript-event-target';
 interface FirecrawlAppConfig {
     apiKey?: string | null;
     apiUrl?: string | null;
+    anthropicApiKey?: string;
 }
 /**
  * Metadata for a Firecrawl document.
@@ -277,11 +278,13 @@ declare class FirecrawlError extends Error {
 declare class FirecrawlApp {
     apiKey: string;
     apiUrl: string;
+    private _anthropicApiKey;
     /**
      * Initializes a new instance of the FirecrawlApp class.
      * @param config - Configuration options for the FirecrawlApp instance.
      */
-    constructor({ apiKey, apiUrl }: FirecrawlAppConfig);
+    constructor({ apiKey, apiUrl, anthropicApiKey }: FirecrawlAppConfig);
+    get anthropicApiKey(): string;
     /**
      * Scrapes a URL using the Firecrawl API.
      * @param url - The URL to scrape.

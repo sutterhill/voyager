@@ -42,10 +42,7 @@ var import_typescript_event_target = require("typescript-event-target");
 
 // src/anthropic.ts
 var import_sdk = require("@anthropic-ai/sdk");
-async function findRelevantUrls(query, urls) {
-  const anthropic = new import_sdk.Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY
-  });
+async function findRelevantUrls(query, urls, anthropic) {
   try {
     const prompt = `Here are the inputs for your analysis:
 
@@ -120,6 +117,7 @@ Remember:
 
 // src/index.ts
 var import_zod = require("zod");
+var import_sdk2 = __toESM(require("@anthropic-ai/sdk"), 1);
 var FirecrawlError = class extends Error {
   statusCode;
   constructor(message, statusCode) {
@@ -130,16 +128,21 @@ var FirecrawlError = class extends Error {
 var FirecrawlApp = class {
   apiKey;
   apiUrl;
+  _anthropicApiKey;
   /**
    * Initializes a new instance of the FirecrawlApp class.
    * @param config - Configuration options for the FirecrawlApp instance.
    */
-  constructor({ apiKey = null, apiUrl = null }) {
+  constructor({ apiKey = null, apiUrl = null, anthropicApiKey = "" }) {
     if (typeof apiKey !== "string") {
       throw new FirecrawlError("No API key provided", 401);
     }
     this.apiKey = apiKey;
     this.apiUrl = apiUrl || "https://api.firecrawl.dev";
+    this._anthropicApiKey = anthropicApiKey;
+  }
+  get anthropicApiKey() {
+    return this._anthropicApiKey;
   }
   /**
    * Scrapes a URL using the Firecrawl API.
@@ -494,6 +497,9 @@ var FirecrawlApp = class {
    * @returns SmartCrawlResponse containing relevant URLs and their data
    */
   async smartCrawl(url, query, params) {
+    const anthropic = new import_sdk2.default({
+      apiKey: this.anthropicApiKey
+    });
     const scrapeLimit = params?.limit ?? 20;
     const MIN_FOUND_RESULTS = 1;
     let totalScrapes = 0;
@@ -547,7 +553,7 @@ var FirecrawlApp = class {
       };
       let remainingUrls = [...mapResult.links];
       while (foundData.length < MIN_FOUND_RESULTS && totalScrapes < scrapeLimit && remainingUrls.length > 0) {
-        const relevantUrlsRes = await findRelevantUrls(query, remainingUrls);
+        const relevantUrlsRes = await findRelevantUrls(query, remainingUrls, anthropic);
         if (relevantUrlsRes.error || !relevantUrlsRes.urls.length) {
           break;
         }

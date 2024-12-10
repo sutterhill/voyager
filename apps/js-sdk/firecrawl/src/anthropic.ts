@@ -5,11 +5,7 @@ interface FindUrlsResponse {
   error?: string;
 }
 
-export async function findRelevantUrls(query: string, urls: string[]): Promise<FindUrlsResponse> {
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
-
+export async function findRelevantUrls(query: string, urls: string[], anthropic: Anthropic): Promise<FindUrlsResponse> {
   try {
     // Construct the prompt
     const prompt = `Here are the inputs for your analysis:

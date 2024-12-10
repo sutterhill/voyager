@@ -5,6 +5,7 @@ import { WebSocket } from "isows";
 import { TypedEventTarget } from "typescript-event-target";
 import { findRelevantUrls } from "./anthropic.js";
 import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 
 /**
  * Configuration interface for FirecrawlApp.
@@ -14,6 +15,7 @@ import { z } from "zod";
 export interface FirecrawlAppConfig {
   apiKey?: string | null;
   apiUrl?: string | null;
+  anthropicApiKey?: string;
 }
 
 /**
@@ -302,18 +304,24 @@ export class FirecrawlError extends Error {
 export default class FirecrawlApp {
   public apiKey: string;
   public apiUrl: string;
+  private _anthropicApiKey: string;
 
   /**
    * Initializes a new instance of the FirecrawlApp class.
    * @param config - Configuration options for the FirecrawlApp instance.
    */
-  constructor({ apiKey = null, apiUrl = null }: FirecrawlAppConfig) {
+  constructor({ apiKey = null, apiUrl = null, anthropicApiKey = ''}: FirecrawlAppConfig) {
     if (typeof apiKey !== "string") {
       throw new FirecrawlError("No API key provided", 401);
     }
 
     this.apiKey = apiKey;
     this.apiUrl = apiUrl || "https://api.firecrawl.dev";
+    this._anthropicApiKey = anthropicApiKey;
+  }
+
+  get anthropicApiKey(): string {
+    return this._anthropicApiKey;
   }
 
   /**
@@ -728,6 +736,10 @@ export default class FirecrawlApp {
     query: string,
     params?: SmartCrawlParams
   ): Promise<SmartCrawlResponse | ErrorResponse> {
+    const anthropic = new Anthropic({
+      apiKey: this.anthropicApiKey,
+    });
+    
     const scrapeLimit = params?.limit ?? 20;
 
     const MIN_FOUND_RESULTS = 1;
@@ -798,7 +810,7 @@ export default class FirecrawlApp {
       
       while (foundData.length < MIN_FOUND_RESULTS && totalScrapes < scrapeLimit && remainingUrls.length > 0) {
         // Get relevant URLs
-        const relevantUrlsRes = await findRelevantUrls(query, remainingUrls);
+        const relevantUrlsRes = await findRelevantUrls(query, remainingUrls, anthropic);
         if (relevantUrlsRes.error || !relevantUrlsRes.urls.length) {
           break;
         }
